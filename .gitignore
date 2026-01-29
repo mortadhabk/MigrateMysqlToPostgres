@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.npm
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+
+# Docker
+.docker
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+uploads/
+backend/uploads/
+backend/logs/
+containers/sql-dump/dump.sql
+containers/output/
+
+# Testing
+coverage/
+.nyc_output/

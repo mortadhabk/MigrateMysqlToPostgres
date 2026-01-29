@@ -1,0 +1,71 @@
+services:
+  mysql-source:
+    image: mysql:8.0
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - ./sql-dump/${MIGRATION_ID:-}:/docker-entrypoint-initdb.d:ro
+      - mysql-data:/var/lib/mysql
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p$${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    networks:
+      - migration-net
+
+  postgres-target:
+    image: postgres:18-alpine
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-target_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres123456}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./migration:/migration:ro
+      - ./output:/output:rw
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - migration-net
+
+  pgloader:
+    image: dimitri/pgloader:latest
+    platform: linux/amd64
+    restart: unless-stopped
+    volumes:
+      - ./migration:/migration:rw
+      - ./output:/output:rw
+      - ./logs:/logs:rw
+    command: tail -f /dev/null
+    networks:
+      - migration-net
+    depends_on:
+      mysql-source:
+        condition: service_healthy
+      postgres-target:
+        condition: service_healthy
+
+volumes:
+  mysql-data:
+  postgres-data:
+
+networks:
+  migration-net:
+    driver: bridge

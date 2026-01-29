@@ -1,0 +1,51 @@
+# Database dump and backup files
+sql-dump/*.sql
+*.sql.bak
+*.sql.backup
+*.dump
+*.dmp
+# SQL dumps
+*.sql
+sql-dump/
+pgAdmin/storage/
+# Large data files
+*.csv
+*.tsv
+*.json
+*.xml
+data/
+backups/
+
+# Log files
+*.log
+logs/
+log/
+
+# Temporary and cache files
+*.tmp
+*.temp
+cache/
+tmp/
+
+# Large pgAdmin files
+pgAdmin/storage/*/logs/
+pgAdmin/storage/*/sessions/
+pgAdmin/storage/*/*.log
+pgAdmin/pgadmin4.db
+
+# Large migration files
+migration/*.data
+migration/*.bak
+migration/data/
+
+# Archives and compressed files
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+# System files
+.DS_Store
+Thumbs.db
+
+.env

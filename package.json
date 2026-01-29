@@ -1,0 +1,39 @@
+{
+  "name": "mysql-to-postgresql-migration",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Web-based MySQL to PostgreSQL migration tool with real-time monitoring",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/MigrateMysqlToPostgres"
+  },
+  "author": "",
+  "license": "MIT",
+  "keywords": [
+    "mysql",
+    "postgresql",
+    "migration",
+    "database",
+    "pgloader",
+    "web-app",
+    "react",
+    "express"
+  ],
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "scripts": {
+    "setup": "bash setup.sh",
+    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
+    "dev": "echo 'Run in separate terminals: npm run dev:frontend && npm run dev:backend'",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run dev",
+    "build": "cd frontend && npm run build && cd ../backend && echo 'Backend ready'",
+    "docker:build": "docker-compose -f docker-compose.prod.yml build",
+    "docker:up": "docker-compose -f docker-compose.prod.yml up -d",
+    "docker:down": "docker-compose -f docker-compose.prod.yml down",
+    "docker:logs": "docker-compose -f docker-compose.prod.yml logs -f",
+    "clean": "rm -rf frontend/node_modules backend/node_modules frontend/dist"
+  }
+}

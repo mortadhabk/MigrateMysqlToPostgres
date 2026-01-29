@@ -1,0 +1,27 @@
+LOAD DATABASE
+    FROM mysql://dbuser:dbpass123@mysql-source:3306/source_db
+    INTO postgresql://postgres:postgres@12345@postgres-target:5432/target_db
+
+WITH include drop, 
+     create tables, 
+     create indexes, 
+     reset sequences,
+     workers = 8, 
+     concurrency = 1,
+     multiple readers per thread, 
+     rows per range = 50000
+
+SET PostgreSQL PARAMETERS
+    maintenance_work_mem to '256MB',
+    work_mem to '64MB',
+    statement_timeout to '300000'
+
+SET MySQL PARAMETERS
+    net_read_timeout  = '300',
+    net_write_timeout = '300'
+
+CAST type datetime to timestamptz
+                  drop default drop not null using zero-dates-to-null,
+     type date drop not null drop default using zero-dates-to-null,
+     type tinyint to boolean using tinyint-to-boolean,
+     type year to integer;
