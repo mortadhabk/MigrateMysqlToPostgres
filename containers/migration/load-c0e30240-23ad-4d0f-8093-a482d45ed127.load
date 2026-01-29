@@ -1,5 +1,5 @@
 LOAD DATABASE
-    FROM mysql://root:root123456@mysql-source:3306/test_db_1
+    FROM mysql://root:root123456@mysql-source:3306/test_d
     INTO postgres://postgres:postgres123456@postgres-target:5432/target_db
 
 WITH include drop,
