@@ -24,6 +24,7 @@ const PORT = process.env.PORT || 3001;
 const UPLOAD_DIR = process.env.UPLOAD_DIR || './uploads';
 const LOGS_DIR = process.env.LOGS_DIR || './logs';
 const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE) || 1073741824; // 1GB
+const CONTAINERS_DIR = path.resolve(__dirname, '../containers');
 
 // Middleware
 app.use(cors({
@@ -67,6 +68,25 @@ const upload = multer({
 
 // In-memory store for migration sessions
 const migrations = new Map();
+
+const safeRemove = (targetPath, label) => {
+  if (!targetPath) return;
+  if (!fs.existsSync(targetPath)) return;
+  try {
+    fs.rmSync(targetPath, { recursive: true, force: true });
+    console.log(`[cleanup] Removed ${label}: ${targetPath}`);
+  } catch (err) {
+    console.warn(`[cleanup] Failed to remove ${label}: ${targetPath}`, err.message);
+  }
+};
+
+const broadcastStatus = (migration, statusData) => {
+  migration.clients?.forEach(client => {
+    try {
+      client.res.write(`data: ${JSON.stringify({ type: 'status', data: statusData })}\n\n`);
+    } catch {}
+  });
+};
 
 /**
  * POST /api/upload
@@ -127,6 +147,14 @@ app.post('/api/migrate/:migrationId', async (req, res) => {
   if (!migration.clients) migration.clients = [];
 
   migrationService.startMigration(migration, (logEntry) => {
+    if (logEntry?.type === 'status' && logEntry?.data) {
+      if (typeof logEntry.data.progress === 'number') {
+        migration.progress = logEntry.data.progress;
+      }
+      if (logEntry.data.status) {
+        migration.status = logEntry.data.status;
+      }
+    }
     migration.clients?.forEach(client => {
       try { client.res.write(`data: ${JSON.stringify(logEntry)}\n\n`); } catch {}
     });
@@ -142,9 +170,7 @@ app.post('/api/migrate/:migrationId', async (req, res) => {
       outputFile: migration.outputFile ? path.basename(migration.outputFile) : null
     };
 
-    migration.clients?.forEach(client => {
-      try { client.res.write(`data: ${JSON.stringify({ type: 'status', data: statusData })}\n\n`); } catch {}
-    });
+    broadcastStatus(migration, statusData);
   })
   .catch(error => {
     migration.status = 'failed';
@@ -156,9 +182,7 @@ app.post('/api/migrate/:migrationId', async (req, res) => {
       error: migration.error
     };
 
-    migration.clients?.forEach(client => {
-      try { client.res.write(`data: ${JSON.stringify({ type: 'status', data: statusData })}\n\n`); } catch {}
-    });
+    broadcastStatus(migration, statusData);
   });
 
   return res.status(200).json({
@@ -266,6 +290,32 @@ app.get('/api/download/:migrationId', (req, res) => {
   }
 
   const fileName = `postgres_dump_${migrationId}.sql`;
+  let cleaned = false;
+  const cleanupArtifacts = () => {
+    if (cleaned) return;
+    cleaned = true;
+
+    const dumpDir = path.join(CONTAINERS_DIR, 'sql-dump', migrationId);
+    const loadFile = path.join(CONTAINERS_DIR, 'migration', `load-${migrationId}.load`);
+    const outputFile = migration.outputFile;
+
+    safeRemove(dumpDir, 'sql-dump directory');
+    safeRemove(loadFile, 'pgloader config');
+    safeRemove(outputFile, 'postgres dump');
+    migration.outputFile = null;
+  };
+
+  const handleCleanup = () => {
+    if (!res.writableEnded) {
+      console.warn(`[cleanup] Download for ${migrationId} did not finish, skipping cleanup`);
+      return;
+    }
+    cleanupArtifacts();
+  };
+
+  res.on('finish', handleCleanup);
+  res.on('close', handleCleanup);
+
   res.download(migration.outputFile, fileName);
 });
 
