@@ -259,12 +259,12 @@ const MigrationApp = () => {
                   </div>
                   <div className="text-right">
                     <p className="text-xs uppercase tracking-wide text-slate-400">Progress</p>
-                    <p className="text-blue-600 font-mono text-sm font-bold">{progress}%</p>
+                    <p className="text-indigo-600 font-mono text-sm font-bold">{progress}%</p>
                   </div>
                 </div>
-                <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
+                <div className="w-full bg-slate-200/70 rounded-full h-2.5 overflow-hidden">
                   <div
-                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-500"
+                    className="bg-gradient-to-r from-indigo-500 via-blue-500 to-teal-400 h-2.5 rounded-full transition-all duration-500"
                     style={{ width: `${progress}%` }}
                   />
                 </div>
@@ -290,9 +290,9 @@ const MigrationApp = () => {
           {status === 'failed' && (
             <div className="space-y-4">
               {logs.length > 0 && <LogConsole logs={logs} />}
-              <div className="bg-rose-50/60 border border-rose-200 rounded-3xl p-6 shadow-sm">
+              <div className="bg-rose-50/80 border border-rose-200/80 rounded-3xl p-6 shadow-sm">
                 <div className="flex flex-col sm:flex-row sm:items-start gap-4">
-                  <div className="h-10 w-10 rounded-full bg-white border border-rose-200 flex items-center justify-center">
+                  <div className="h-10 w-10 rounded-full bg-white border border-rose-200 flex items-center justify-center shadow-sm">
                     <div className="h-2.5 w-2.5 rounded-full bg-rose-500" />
                   </div>
                   <div className="flex-1">

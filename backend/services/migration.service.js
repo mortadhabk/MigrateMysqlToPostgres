@@ -57,6 +57,23 @@ class Logger {
   error(message, extra) { this.log('ERROR', message, extra); }
 }
 
+function emitStatus(onLog, data) {
+  if (!onLog) return;
+  onLog({ type: 'status', data });
+}
+
+function safeRemove(targetPath, label, logger) {
+  if (!targetPath) return;
+  if (!fs.existsSync(targetPath)) return;
+
+  try {
+    fs.rmSync(targetPath, { recursive: true, force: true });
+    logger.info(`Cleanup removed ${label}: ${targetPath}`);
+  } catch (err) {
+    logger.warn(`Cleanup failed for ${label}: ${targetPath}`, { message: err.message });
+  }
+}
+
 /**
  * Spawn a child process and capture output
  */
@@ -520,8 +537,9 @@ async function getDockerComposeCommand() {
 
 
 
-async function cleanupDockerProject(migrationId, logger) {
+async function cleanupDockerProject(migrationId, logger, options = {}) {
   const projectName = `migration-${migrationId}`;
+  const { keepOutputFile = true } = options;
 
   logger.info('--- Docker cleanup start ---');
   logger.info(`Project name: ${projectName}`);
@@ -562,6 +580,21 @@ async function cleanupDockerProject(migrationId, logger) {
 
     logger.warn('Proceeding without cleanup (this is usually OK for first run)');
   } finally {
+    const dumpDir = path.join(DOCKER_COMPOSE_PATH, 'sql-dump', migrationId);
+    const loadFile = path.join(DOCKER_COMPOSE_PATH, 'migration', `load-${migrationId}.load`);
+    const outputFile = path.join(DOCKER_COMPOSE_PATH, 'output', `postgres_dump_${migrationId}.sql`);
+
+    safeRemove(dumpDir, 'sql-dump directory', logger);
+    safeRemove(loadFile, 'pgloader config', logger);
+
+    if (keepOutputFile) {
+      if (fs.existsSync(outputFile)) {
+        logger.info(`Keeping output file for download: ${outputFile}`);
+      }
+    } else {
+      safeRemove(outputFile, 'postgres dump', logger);
+    }
+
     logger.info('--- Docker cleanup end ---');
   }
 }
@@ -573,6 +606,19 @@ async function cleanupDockerProject(migrationId, logger) {
 
 async function startMigration(migration, onLog = null) {
   const logger = new Logger(migration.logPath, onLog);
+  let currentProgress = 0;
+
+  const reportProgress = (progress, message) => {
+    currentProgress = Math.max(currentProgress, progress);
+    emitStatus(onLog, {
+      status: 'running',
+      progress: currentProgress,
+      message
+    });
+    if (message) {
+      logger.info(message);
+    }
+  };
 
   // Indique si on a démarré Docker (pour éviter cleanup inutile)
   let dockerStarted = false;
@@ -586,25 +632,33 @@ async function startMigration(migration, onLog = null) {
 
     // 1) Prepare dump file
     const dumpPath = await prepareDumpFile(migration.uploadedFile, migration.id, logger);
+    reportProgress(5, 'Dump prepared');
+    reportProgress(10, 'Dump validated');
 
     // 2) Create pgloader config
     await createPgloaderConfig(migration.id, dumpPath, logger);
+    reportProgress(20, 'Pgloader config created');
 
     // 3) Start docker containers (MIGRATION_ID is passed)
     await startDockerContainers(migration.id, logger);
     dockerStarted = true;
+    reportProgress(35, 'Docker containers started');
 
     // 4) Wait for db readiness + verify MySQL has tables
     await waitForDatabases(migration.id, dumpPath, logger);
+    reportProgress(50, 'Databases healthy and tables verified');
 
     // 5) Run pgloader
     await runPgloaderMigration(migration.id, logger);
+    reportProgress(75, 'Pgloader finished');
 
     // 6) Verify Postgres has tables BEFORE dumping
     await verifyPostgresHasTables(migration.id, logger);
+    reportProgress(90, 'Postgres tables verified');
 
     // 7) Export dump
     const outputFile = await exportPostgresDump(migration.id, logger);
+    reportProgress(100, 'PostgreSQL dump exported');
 
     logger.info('Migration completed successfully');
 
@@ -616,7 +670,7 @@ async function startMigration(migration, onLog = null) {
     // Cleanup toujours, mais seulement si docker a été démarré
     if (dockerStarted) {
       try {
-        await cleanupDockerProject(migration.id, logger);
+        await cleanupDockerProject(migration.id, logger, { keepOutputFile: true });
       } catch (cleanupError) {
         logger.error(`Cleanup error: ${cleanupError?.message || cleanupError}`);
       }
