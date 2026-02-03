@@ -79,18 +79,18 @@ function extractDatabaseName(dumpPath) {
   const content = fs.readFileSync(dumpPath, 'utf8');
   
   // Look for CREATE DATABASE or USE statements
-  const createDbMatch = content.match(/CREATE DATABASE(?:\s+IF NOT EXISTS)?\s+`?(\w+)`?/i);
+  const createDbMatch = content.match(/CREATE DATABASE(?:\s+IF NOT EXISTS)?\s+`?([^`;\s]+)`?/i);
   if (createDbMatch) {
     return createDbMatch[1];
   }
   
-  const useDbMatch = content.match(/USE\s+`?(\w+)`?/i);
+  const useDbMatch = content.match(/USE\s+`?([^`;\s]+)`?/i);
   if (useDbMatch) {
     return useDbMatch[1];
   }
   
   // Fallback to environment variable
-  return process.env.DATABASE_NAME ;
+  return process.env.DATABASE_NAME || process.env.MYSQL_DATABASE;
 }
 
 /**
@@ -145,6 +145,9 @@ async function createPgloaderConfig(migrationId, dumpPath, logger) {
   const mysqlUser = process.env.MYSQL_USER; // Use root to access any database
   const mysqlPassword = encodeCredentials(process.env.MYSQL_PASSWORD );
   const mysqlDb = extractDatabaseName(dumpPath); // Extract from dump instead of env var
+  if (!mysqlDb) {
+    throw new Error('Unable to determine MySQL database name from dump or environment variables');
+  }
   logger.info(`Detected MySQL database name: ${mysqlDb}`);
 
   const pgHost = process.env.POSTGRES_HOST;
@@ -259,11 +262,19 @@ async function waitForDatabases(migrationId, logger, maxAttempts = 60) {
         
         // Verify MySQL dump was loaded by checking if any databases exist beyond system DBs
         try {
-          const dbCheckResult = await execProcess('docker', [
+          const mysqlUser = process.env.MYSQL_USER || 'root';
+          const mysqlPassword = mysqlUser === 'root'
+            ? process.env.MYSQL_ROOT_PASSWORD
+            : process.env.MYSQL_PASSWORD;
+          const mysqlArgs = [
             'exec', mysqlContainerName,
-            'mysql', '-u', `${process.env.mysqlUser}`, `-p${process.env.MYSQL_ROOT_PASSWORD}`,
-            '-e', 'SHOW DATABASES;'
-          ]);
+            'mysql', '-u', mysqlUser
+          ];
+          if (mysqlPassword) {
+            mysqlArgs.push(`-p${mysqlPassword}`);
+          }
+          mysqlArgs.push('-e', 'SHOW DATABASES;');
+          const dbCheckResult = await execProcess('docker', mysqlArgs);
           const databases = dbCheckResult.stdout.split('\n').filter(db => 
             db && !['Database', 'information_schema', 'mysql', 'performance_schema', 'sys'].includes(db.trim())
           );
