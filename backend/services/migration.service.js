@@ -287,10 +287,9 @@ async function waitForDatabases(migrationId, dumpPath, logger, maxAttempts = 120
         await sleep(10000);
 
         // Verify MySQL contains the expected DB and at least one table
-        const mysqlUser = process.env.MYSQL_USER || 'root';
-        const mysqlPassword = mysqlUser === 'root'
-          ? process.env.MYSQL_ROOT_PASSWORD
-          : process.env.MYSQL_PASSWORD;
+        const mysqlUser =  'root';
+        const mysqlPassword = process.env.MYSQL_ROOT_PASSWORD;
+          
 
         const cmd = [
           'exec', mysqlContainerName,
