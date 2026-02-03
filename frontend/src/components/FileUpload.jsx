@@ -37,12 +37,14 @@ const FileUpload = ({ onFileSelect }) => {
         style={{ display: 'none' }}
       />
       <label htmlFor="file-upload" className="cursor-pointer block">
-        <p className="text-slate-900 font-semibold text-xl mb-2">Upload MySQL dump</p>
-        <p className="text-slate-500 text-sm mb-6">Drag and drop your .sql file here, or browse to select it.</p>
+        <p className="text-slate-900 font-semibold text-xl mb-2">Déposer un dump MySQL</p>
+        <p className="text-slate-500 text-sm mb-6">Glissez-déposez votre fichier .sql ici ou cliquez pour le sélectionner.</p>
         <span className="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-indigo-700 bg-indigo-50 rounded-lg group-hover:bg-white group-hover:text-indigo-800 group-hover:shadow-sm transition">
-          Choose file
+          Choisir un fichier
         </span>
-        <p className="text-slate-400 text-xs mt-4">Supports .sql files • Up to 1 GB</p>
+        <p className="text-slate-400 text-xs mt-4">
+          Fichiers .sql uniquement • Traitement temporaire en session
+        </p>
       </label>
     </div>
   )

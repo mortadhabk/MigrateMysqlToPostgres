@@ -1,6 +1,6 @@
 # MySQL to PostgreSQL Migration Tool
 
-Application web complète pour migrer des bases de données MySQL vers PostgreSQL avec une interface utilisateur moderne.
+Application web complète pour migrer des bases de données MySQL vers PostgreSQL avec une interface utilisateur moderne, pensée pour un traitement temporaire et transparent des données (session uniquement, suppression automatique).
 
 ## Architecture
 
@@ -69,8 +69,10 @@ MigrateMysqlToPostgres/
 7. Export Result (pg_dump)
    ↓
 8. Download & Cleanup
+   ├── Download PostgreSQL dump
    ├── Stop containers
-   └── Remove volumes
+   ├── Remove volumes
+   └── Delete temporary files (uploads, logs, dumps)
 ```
 
 ### 🚀 Démarrage Rapide
@@ -176,6 +178,16 @@ FRONTEND_PORT=5173
 - **Download Result** - Export PostgreSQL dump
 - **Error Handling** - Affichage des erreurs détaillées
 
+### 🔒 Data handling / Privacy
+
+Cette application est conçue pour un **traitement temporaire** et **session-only**.
+
+- **Pas de stockage des bases** : aucune copie persistante de la base source ou cible n’est conservée.
+- **Credentials éphémères** : utilisés uniquement pour exécuter la migration, jamais sauvegardés dans les logs.
+- **Fichiers temporaires** : upload SQL, configuration pgLoader et dump PostgreSQL sont stockés le temps de la session puis supprimés.
+- **Logs minimaux** : uniquement des statuts techniques, sans données sensibles ni secrets.
+- **Expiration automatique** : le dump final est supprimé après téléchargement ou à l’expiration de la session (30 minutes par défaut).
+
 ### 📊 Variables d'Environnement Supportées
 
 ```
@@ -187,6 +199,11 @@ POSTGRES_HOST      (default: postgres-target)
 POSTGRES_USER      (default: postgres)
 POSTGRES_PASSWORD  (required)
 POSTGRES_DB        (default: target_db)
+CLEANUP_TTL_MS     (default: 1800000, 30 minutes)
+FAILED_CLEANUP_TTL_MS (default: 300000, 5 minutes)
+UPLOAD_DIR         (default: ./uploads)
+LOGS_DIR           (default: ./logs)
+MAX_FILE_SIZE      (default: 1073741824, 1GB)
 ```
 
 ### 🔍 Dépannage
@@ -205,6 +222,16 @@ POSTGRES_DB        (default: target_db)
 
 ### 📦 Production Deployment
 
+Utilisez le guide ci-dessous pour une mise en production rapide et reproductible.
+
+### 🚢 Release / Deploy (guide rapide)
+
+1. **Configurer les variables d’environnement** (conteneurs + backend).
+2. **Builder** les images Docker.
+3. **Démarrer** les services en mode détaché.
+4. **Vérifier** le health check (`/api/health`) et le front.
+5. **Surveiller** les logs (sans données sensibles).
+
 ```bash
 # Build images
 docker-compose build
@@ -214,7 +241,19 @@ docker-compose up -d
 
 # Check status
 docker-compose ps
+
+# Backend health check
+curl http://localhost:3001/api/health
 ```
+
+### ✅ Production checklist
+
+- [ ] Variables d’environnement renseignées (credentials, ports, limites).
+- [ ] `CLEANUP_TTL_MS` adapté à vos contraintes de session.
+- [ ] CORS restreint si exposition publique.
+- [ ] Logs sans données sensibles (pas de dumps/credentials).
+- [ ] Surveillance minimale (health checks, uptime, alertes).
+- [ ] Volumes Docker nettoyés régulièrement (`docker compose down -v`).
 
 ---
 
