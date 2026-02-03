@@ -1,8 +1,9 @@
 const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const dotenv = require('dotenv');
 
-const DOCKER_COMPOSE_PATH = process.env.DOCKER_COMPOSE_PATH || '../containers';
+const DOCKER_COMPOSE_PATH = process.env.DOCKER_COMPOSE_PATH || path.resolve(__dirname, '../../containers');
 
 /**
  * Logging utility with real-time callback
@@ -14,31 +15,25 @@ class Logger {
     fs.writeFileSync(logPath, '');
   }
 
-  log(level, message) {
+  log(level, message, extra = undefined) {
     const timestamp = new Date().toISOString();
-    const logEntry = { 
+    const logEntry = {
       type: 'log',
-      timestamp, 
-      level, 
-      message 
+      timestamp,
+      level,
+      message,
+      ...(extra ? { extra } : {})
     };
     const logLine = JSON.stringify(logEntry) + '\n';
-    
-    // Write to file
+
     fs.appendFileSync(this.logPath, logLine, 'utf8');
-    
-    // Send real-time callback
-    if (this.onLog) {
-      this.onLog(logEntry);
-    }
-    
-    // Also log to console
+    if (this.onLog) this.onLog(logEntry);
     console.log(`[${level}] ${message}`);
   }
 
-  info(message) { this.log('INFO', message); }
-  warn(message) { this.log('WARN', message); }
-  error(message) { this.log('ERROR', message); }
+  info(message, extra) { this.log('INFO', message, extra); }
+  warn(message, extra) { this.log('WARN', message, extra); }
+  error(message, extra) { this.log('ERROR', message, extra); }
 }
 
 /**
@@ -46,30 +41,54 @@ class Logger {
  */
 function execProcess(command, args, options = {}) {
   return new Promise((resolve, reject) => {
-    const process = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], ...options });
+    const child = spawn(command, args, { stdio: ['pipe', 'pipe', 'pipe'], ...options });
     let stdout = '';
     let stderr = '';
 
-    process.stdout.on('data', (data) => {
-      stdout += data.toString();
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
+    child.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    child.on('close', (code) => {
+      if (code === 0) resolve({ code, stdout, stderr });
+      else reject({ code, stdout, stderr });
     });
 
-    process.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    process.on('close', (code) => {
-      if (code === 0) {
-        resolve({ code, stdout, stderr });
-      } else {
-        reject({ code, stdout, stderr });
-      }
-    });
-
-    process.on('error', (err) => {
-      reject(err);
-    });
+    child.on('error', (err) => reject(err));
   });
+}
+
+/**
+ * Load containers/.env into process.env (real load)
+ */
+function loadContainerEnv(logger) {
+  const containerEnvPath = path.join(DOCKER_COMPOSE_PATH, '.env');
+
+  if (!fs.existsSync(containerEnvPath)) {
+    logger.warn(`No .env found at ${containerEnvPath} - using current process.env only`);
+    return;
+  }
+
+  const result = dotenv.config({
+    path: containerEnvPath,
+    // override false: do NOT override existing env by default
+    override: false,
+  });
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  logger.info(`Loaded environment variables from ${containerEnvPath}`);
+}
+
+/**
+ * Safely parse int env
+ */
+function envInt(name, fallback) {
+  const v = process.env[name];
+  if (v === undefined || v === null || String(v).trim() === '') return fallback;
+  const n = parseInt(String(v), 10);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 /**
@@ -77,19 +96,13 @@ function execProcess(command, args, options = {}) {
  */
 function extractDatabaseName(dumpPath) {
   const content = fs.readFileSync(dumpPath, 'utf8');
-  
-  // Look for CREATE DATABASE or USE statements
+
   const createDbMatch = content.match(/CREATE DATABASE(?:\s+IF NOT EXISTS)?\s+`?([^`;\s]+)`?/i);
-  if (createDbMatch) {
-    return createDbMatch[1];
-  }
-  
+  if (createDbMatch) return createDbMatch[1];
+
   const useDbMatch = content.match(/USE\s+`?([^`;\s]+)`?/i);
-  if (useDbMatch) {
-    return useDbMatch[1];
-  }
-  
-  // Fallback to environment variable
+  if (useDbMatch) return useDbMatch[1];
+
   return process.env.DATABASE_NAME || process.env.MYSQL_DATABASE;
 }
 
@@ -98,8 +111,7 @@ function extractDatabaseName(dumpPath) {
  */
 function encodeCredentials(str) {
   if (!str) return '';
-  return String(str)
-    .replace(/[:'@/?#\[\]]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+  return String(str).replace(/[:'@/?#\[\]]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase());
 }
 
 /**
@@ -107,31 +119,28 @@ function encodeCredentials(str) {
  */
 async function prepareDumpFile(uploadedFile, migrationId, logger) {
   logger.info('Preparing MySQL dump file...');
-  
-  // Create migration-specific directory
+
   const migrationDumpDir = path.join(DOCKER_COMPOSE_PATH, 'sql-dump', migrationId);
   const dumpPath = path.join(migrationDumpDir, 'dump.sql');
 
-  if (!fs.existsSync(migrationDumpDir)) {
-    fs.mkdirSync(migrationDumpDir, { recursive: true });
-  }
+  if (!fs.existsSync(migrationDumpDir)) fs.mkdirSync(migrationDumpDir, { recursive: true });
 
   fs.copyFileSync(uploadedFile, dumpPath);
   logger.info(`Dump file prepared at ${dumpPath}`);
-  
+
   return dumpPath;
 }
 
 /**
- * Create pgloader configuration file from environment variables and dump analysis
+ * Create pgloader configuration file from env + dump analysis
  */
 async function createPgloaderConfig(migrationId, dumpPath, logger) {
   logger.info('Creating pgloader configuration...');
 
-  // Get required environment variables (DATABASE_NAME is now optional)
   const requiredEnvVars = [
-    'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_PASSWORD',
-    'POSTGRES_HOST', 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB'
+    'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_ROOT_PASSWORD',
+    'POSTGRES_HOST', 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB',
+    'MYSQL_PORT_INTERNAL', 'POSTGRES_PORT_INTERNAL'
   ];
 
   const missingVars = requiredEnvVars.filter(v => !process.env[v]);
@@ -139,19 +148,17 @@ async function createPgloaderConfig(migrationId, dumpPath, logger) {
     throw new Error(`Missing required environment variables: ${missingVars.join(', ')}`);
   }
 
-  // Use internal Docker ports (pgloader runs inside Docker network)
   const mysqlHost = process.env.MYSQL_HOST;
-  const mysqlPort = parseInt(process.env.MYSQL_PORT_INTERNAL); // Internal port inside Docker network
-  const mysqlUser = process.env.MYSQL_USER; // Use root to access any database
-  const mysqlPassword = encodeCredentials(process.env.MYSQL_PASSWORD );
-  const mysqlDb = extractDatabaseName(dumpPath); // Extract from dump instead of env var
-  if (!mysqlDb) {
-    throw new Error('Unable to determine MySQL database name from dump or environment variables');
-  }
+  const mysqlPort = envInt('MYSQL_PORT_INTERNAL', 3306);
+  const mysqlUser = 'root';
+  const mysqlPassword = encodeCredentials(process.env.MYSQL_ROOT_PASSWORD);
+
+  const mysqlDb = extractDatabaseName(dumpPath);
+  if (!mysqlDb) throw new Error('Unable to determine MySQL database name from dump or environment variables');
   logger.info(`Detected MySQL database name: ${mysqlDb}`);
 
   const pgHost = process.env.POSTGRES_HOST;
-  const pgPort = parseInt(process.env.POSTGRES_PORT_INTERNAL); // Internal port inside Docker network
+  const pgPort = envInt('POSTGRES_PORT_INTERNAL', 5432);
   const pgUser = process.env.POSTGRES_USER;
   const pgPassword = encodeCredentials(process.env.POSTGRES_PASSWORD);
   const pgDb = process.env.POSTGRES_DB;
@@ -172,10 +179,7 @@ EXCLUDING TABLE NAMES MATCHING '_*'
 
   const configDir = path.join(DOCKER_COMPOSE_PATH, 'migration');
   const configPath = path.join(configDir, `load-${migrationId}.load`);
-
-  if (!fs.existsSync(configDir)) {
-    fs.mkdirSync(configDir, { recursive: true });
-  }
+  if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
 
   fs.writeFileSync(configPath, config, 'utf8');
   logger.info(`Pgloader config created at ${configPath}`);
@@ -188,16 +192,14 @@ EXCLUDING TABLE NAMES MATCHING '_*'
  */
 async function startDockerContainers(migrationId, logger) {
   logger.info('Starting Docker containers...');
+
   const projectName = `migration-${migrationId}`;
   logger.info(`Using Docker Compose project: ${projectName}`);
 
-  // Load environment variables from containers/.env
-  const dotenv = require('dotenv');
-  const containerEnvPath = path.join(DOCKER_COMPOSE_PATH, '.env');
-  if (fs.existsSync(containerEnvPath)) {
-    const envConfig = dotenv.parse(fs.readFileSync(containerEnvPath));
-    logger.info('Loading environment variables from containers/.env');
-  }
+  const env = {
+    ...process.env,
+    MIGRATION_ID: migrationId
+  };
 
   try {
     const result = await execProcess('docker-compose', [
@@ -205,104 +207,130 @@ async function startDockerContainers(migrationId, logger) {
       'up', '--build', '-d'
     ], {
       cwd: DOCKER_COMPOSE_PATH,
-      env: { 
-        ...process.env, 
-        MIGRATION_ID: migrationId 
-      }
+      env
     });
 
-    const lines = result.stdout.split('\n').filter(l => l.trim());
-    lines.forEach(line => logger.info(`Docker: ${line}`));
-    
+    result.stdout.split('\n').filter(Boolean).forEach(line => logger.info(`Docker: ${line}`));
     logger.info('Docker containers started successfully');
-  } catch (err) {
-    logger.error(`Docker startup failed: ${err.stderr}`);
-    throw new Error('Docker Compose failed to start');
+} catch (err) {
+  logger.error('Docker startup failed (details below)');
+  logger.error(`docker compose stdout:\n${(err.stdout || '').trim() || '(empty)'}`);
+  logger.error(`docker compose stderr:\n${(err.stderr || '').trim() || '(empty)'}`);
+  logger.error(`docker compose message: ${err.message || '(no message)'}`);
+
+  throw new Error('Docker Compose failed to start');
+}
+}
+
+/**
+ * Simple sleep
+ */
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Ensure dump file is mounted correctly in MySQL container
+ */
+async function verifyDumpMounted(migrationId, logger) {
+  const mysqlContainerName = `migration-${migrationId}-mysql-source-1`;
+
+  try {
+    const ls = await execProcess('docker', [
+      'exec', mysqlContainerName, 'sh', '-lc', 'ls -la /docker-entrypoint-initdb.d'
+    ]);
+    logger.info('MySQL initdb.d content:', { content: ls.stdout });
+
+    if (!ls.stdout.includes('dump.sql')) {
+      logger.warn(
+        'dump.sql not visible inside /docker-entrypoint-initdb.d. ' +
+        'Your volume mount may be pointing to the wrong folder (MIGRATION_ID mismatch).'
+      );
+    }
+  } catch (e) {
+    logger.warn(`Unable to verify initdb.d mount: ${e.message}`);
   }
 }
 
 /**
- * Wait for databases to be ready
+ * Wait for databases to be ready + verify MySQL has loaded user DB/tables
  */
-async function waitForDatabases(migrationId, logger, maxAttempts = 60) {
+async function waitForDatabases(migrationId, dumpPath, logger, maxAttempts = 120) {
   logger.info('Waiting for databases to be ready...');
+
   const mysqlContainerName = `migration-${migrationId}-mysql-source-1`;
   const pgContainerName = `migration-${migrationId}-postgres-target-1`;
-  const pgloaderContainerName = `migration-${migrationId}-pgloader-1`;
-  const mysqlPort = parseInt(process.env.MYSQL_PORT_INTERNAL);
-  const pgPort = parseInt(process.env.POSTGRES_PORT_INTERNAL || process.env.POSTGRES_PORT, 10) || 5432;
+
   const startedAt = Date.now();
+  const mysqlDb = extractDatabaseName(dumpPath);
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      // Check MySQL health status via Docker
       const mysqlHealthResult = await execProcess('docker', [
-        'inspect',
-        '--format', '{{.State.Health.Status}}',
-        mysqlContainerName
+        'inspect', '--format', '{{.State.Health.Status}}', mysqlContainerName
       ]);
-      const mysqlHealth = mysqlHealthResult.stdout.trim();
-      
-      // Check PostgreSQL health status via Docker
       const pgHealthResult = await execProcess('docker', [
-        'inspect',
-        '--format', '{{.State.Health.Status}}',
-        pgContainerName
+        'inspect', '--format', '{{.State.Health.Status}}', pgContainerName
       ]);
+
+      const mysqlHealth = mysqlHealthResult.stdout.trim();
       const pgHealth = pgHealthResult.stdout.trim();
-      
+
       if (mysqlHealth === 'healthy' && pgHealth === 'healthy') {
         const readyIn = ((Date.now() - startedAt) / 1000).toFixed(1);
-        logger.info(`MySQL is healthy after ${attempt} checks (${readyIn}s)`);
-        logger.info(`PostgreSQL is healthy after ${attempt} checks (${readyIn}s)`);
-        
-        // Additional buffer to ensure dump is fully loaded
-        logger.info('Waiting 15 seconds for MySQL dump to complete loading...');
-        await new Promise(resolve => setTimeout(resolve, 15000));
-        
-        // Verify MySQL dump was loaded by checking if any databases exist beyond system DBs
+        logger.info(`MySQL/PostgreSQL healthy after ${attempt} checks (${readyIn}s)`);
+
+        await verifyDumpMounted(migrationId, logger);
+
+        // Allow MySQL init scripts to finish
+        logger.info('Waiting 10 seconds for MySQL init scripts to complete...');
+        await sleep(10000);
+
+        // Verify MySQL contains the expected DB and at least one table
+        const mysqlUser = process.env.MYSQL_USER || 'root';
+        const mysqlPassword = mysqlUser === 'root'
+          ? process.env.MYSQL_ROOT_PASSWORD
+          : process.env.MYSQL_PASSWORD;
+
+        const cmd = [
+          'exec', mysqlContainerName,
+          'mysql', '-u', mysqlUser
+        ];
+        if (mysqlPassword) cmd.push(`-p${mysqlPassword}`);
+
+        cmd.push('-e', `SHOW DATABASES; USE \`${mysqlDb}\`; SHOW TABLES;`);
+
         try {
-          const mysqlUser = process.env.MYSQL_USER || 'root';
-          const mysqlPassword = mysqlUser === 'root'
-            ? process.env.MYSQL_ROOT_PASSWORD
-            : process.env.MYSQL_PASSWORD;
-          const mysqlArgs = [
-            'exec', mysqlContainerName,
-            'mysql', '-u', mysqlUser
-          ];
-          if (mysqlPassword) {
-            mysqlArgs.push(`-p${mysqlPassword}`);
-          }
-          mysqlArgs.push('-e', 'SHOW DATABASES;');
-          const dbCheckResult = await execProcess('docker', mysqlArgs);
-          const databases = dbCheckResult.stdout.split('\n').filter(db => 
-            db && !['Database', 'information_schema', 'mysql', 'performance_schema', 'sys'].includes(db.trim())
+          const check = await execProcess('docker', cmd);
+          logger.info(`MySQL verification for DB ${mysqlDb}:`, { output: check.stdout });
+
+          const hasTables = check.stdout.split('\n').some(line =>
+            line.trim() && !['Tables_in_' + mysqlDb, ''].includes(line.trim())
           );
-          logger.info(`MySQL databases loaded: ${databases.join(', ')}`);
-          
-          if (databases.length === 0) {
-            logger.warn('No user databases found in MySQL - dump may not have loaded properly');
+
+          if (!hasTables) {
+            logger.warn(
+              `Database ${mysqlDb} is present but has no tables. ` +
+              `Most common cause: MySQL init scripts didn't run because mysql-data volume already existed.`
+            );
           }
-        } catch (err) {
-          logger.warn(`Could not verify MySQL databases: ${err.message}`);
+        } catch (e) {
+          logger.warn(`Could not verify MySQL DB/tables: ${e.stderr || e.message}`);
         }
-        
-        logger.info(`Databases ready in ${readyIn}s, proceeding to pgloader`);
+
         return;
       }
-      
-      if (attempt <= 3 || attempt % 5 === 0) {
-        logger.info(`Waiting for databases... (${attempt}/${maxAttempts}) - MySQL: ${mysqlHealth}, PostgreSQL: ${pgHealth}`);
+
+      if (attempt <= 3 || attempt % 10 === 0) {
+        logger.info(`Waiting... (${attempt}/${maxAttempts}) MySQL: ${mysqlHealth}, PostgreSQL: ${pgHealth}`);
       }
-      
-      await new Promise(resolve => setTimeout(resolve, 2000));
+
+      await sleep(2000);
     } catch (err) {
-      if (attempt < maxAttempts) {
-        if (attempt <= 3 || attempt % 5 === 0) {
-          logger.info(`Waiting for databases... (${attempt}/${maxAttempts})`);
-        }
-        await new Promise(resolve => setTimeout(resolve, 2000));
+      if (attempt <= 3 || attempt % 10 === 0) {
+        logger.info(`Waiting... (${attempt}/${maxAttempts})`);
       }
+      await sleep(2000);
     }
   }
 
@@ -318,40 +346,132 @@ async function runPgloaderMigration(migrationId, logger) {
   const pgloaderContainerName = `migration-${migrationId}-pgloader-1`;
 
   try {
-    const result = await execProcess('docker', [
-      'exec', pgloaderContainerName,
-      'pgloader', `/migration/load-${migrationId}.load`
-    ]);
+    const result = await execProcess(
+      'docker',
+      [
+        'exec',
+        pgloaderContainerName,
+        'pgloader',
+        `/migration/load-${migrationId}.load`
+      ],
+      { env: process.env }
+    );
 
-    const lines = result.stdout.split('\n').filter(l => l.trim());
-    lines.forEach(line => logger.info(`pgloader: ${line}`));
+    const stdout = result.stdout || '';
+    const stderr = result.stderr || '';
+    const combined = `${stdout}\n${stderr}`;
+
+    // Log stdout/stderr lines
+    stdout
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean)
+      .forEach(line => logger.info(`pgloader: ${line}`));
+
+    stderr
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean)
+      .forEach(line => logger.warn(`pgloader(stderr): ${line}`));
+
+    /**
+     * IMPORTANT:
+     * pgloader peut sortir un code 0 même si une erreur s'est produite
+     * (ex: "ERROR mysql: Failed to connect ...")
+     * Donc on détecte les patterns d'erreur.
+     */
+    const errorPatterns = [
+      /ERROR\s+mysql:/i,
+      /Failed to connect/i,
+      /MySQL Error\s*\[\d+\]/i,
+      /FATAL/i,
+      /Unhandled/i,
+      /signal\s+\d+/i
+    ];
+
+    const hasError = errorPatterns.some((re) => re.test(combined));
+
+    // Optionnel: si tu veux aussi échouer quand rien n'a été migré
+    // (utile pour éviter les dumps vides "silencieux")
+    const looksLikeNoWork =
+      /fetch meta data\s+0\s+0\s+0/i.test(combined) ||
+      /table name errors rows bytes total time/i.test(combined) && /fetch meta data\s+0/i.test(combined);
+
+    if (hasError) {
+      throw new Error('pgloader reported an error (see logs above).');
+    }
+
+    if (looksLikeNoWork) {
+      // à toi de décider: warn ou throw. Pour éviter les dumps vides, je recommande throw.
+      throw new Error('pgloader finished but migrated 0 tables/rows (source DB empty or access denied).');
+    }
 
     logger.info('pgloader migration completed successfully');
   } catch (err) {
-    logger.error(`pgloader failed: ${err.stderr}`);
-    throw new Error('pgloader migration failed');
+    // err peut être une Error simple ou un objet {stdout, stderr, code}
+    logger.error('pgloader failed', {
+      message: err.message,
+      code: err.code,
+      stdout: err.stdout,
+      stderr: err.stderr
+    });
+    throw new Error(`pgloader migration failed: ${err.message || 'unknown error'}`);
+  }
+}
+
+
+/**
+ * Verify Postgres tables exist after migration (before dumping)
+ */
+async function verifyPostgresHasTables(migrationId, logger) {
+  const pgContainerName = `migration-${migrationId}-postgres-target-1`;
+  const pgUser = process.env.POSTGRES_USER || 'postgres';
+  const pgDb = process.env.POSTGRES_DB || 'target_db';
+
+  try {
+    const res = await execProcess('docker', [
+      'exec', pgContainerName,
+      'psql', '-U', pgUser, '-d', pgDb, '-c', "\\dt"
+    ]);
+
+    logger.info('Postgres \\dt output:', { output: res.stdout });
+
+    if (res.stdout.includes('Did not find any relations')) {
+      logger.warn('Postgres has no tables. The migration likely copied nothing (MySQL DB empty or pgloader excluded everything).');
+      return false;
+    }
+    return true;
+  } catch (e) {
+    logger.warn(`Could not verify Postgres tables: ${e.stderr || e.message}`);
+    return false;
   }
 }
 
 /**
- * Export PostgreSQL dump
+ * Export PostgreSQL dump (always dump the correct DB)
  */
 async function exportPostgresDump(migrationId, logger) {
   logger.info('Exporting PostgreSQL dump...');
-  const pgContainerName = `migration-${migrationId}-postgres-target-1`;
 
+  const pgContainerName = `migration-${migrationId}-postgres-target-1`;
   const outputDir = path.join(DOCKER_COMPOSE_PATH, 'output');
   const outputPath = path.join(outputDir, `postgres_dump_${migrationId}.sql`);
 
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
-  }
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+
+  const pgUser = process.env.POSTGRES_USER || 'postgres';
+  const pgDb = process.env.POSTGRES_DB || 'target_db';
+
+  logger.info(`pg_dump will use: user=${pgUser}, db=${pgDb}`);
 
   try {
     const result = await execProcess('docker', [
       'exec', pgContainerName,
-      'pg_dump', '-U', process.env.POSTGRES_USER || 'postgres',
-      '-d', process.env.POSTGRES_DB || 'awr'
+      'pg_dump',
+      '-U', pgUser,
+      '-d', pgDb,
+      '--no-owner',
+      '--no-privileges'
     ]);
 
     fs.writeFileSync(outputPath, result.stdout, 'utf8');
@@ -359,7 +479,7 @@ async function exportPostgresDump(migrationId, logger) {
 
     return outputPath;
   } catch (err) {
-    logger.error(`pg_dump failed: ${err.stderr}`);
+    logger.error('pg_dump failed', { stderr: err.stderr, stdout: err.stdout });
     throw new Error('PostgreSQL dump export failed');
   }
 }
@@ -369,8 +489,9 @@ async function exportPostgresDump(migrationId, logger) {
  */
 async function stopDockerContainers(migrationId, logger) {
   logger.info('Stopping Docker containers...');
+
   const projectName = `migration-${migrationId}`;
-  logger.info(`Stopping Docker Compose project: ${projectName}`);
+  const env = { ...process.env, MIGRATION_ID: migrationId };
 
   try {
     await execProcess('docker-compose', [
@@ -378,14 +499,32 @@ async function stopDockerContainers(migrationId, logger) {
       'down'
     ], {
       cwd: DOCKER_COMPOSE_PATH,
-      env: { 
-        ...process.env, 
-        MIGRATION_ID: migrationId 
-      }
+      env
     });
+
     logger.info('Containers stopped successfully');
   } catch (err) {
-    logger.warn(`Cleanup warning: ${err.stderr}`);
+    logger.warn('Cleanup warning', { stderr: err.stderr, stdout: err.stdout });
+  }
+}
+
+
+async function cleanupDockerProject(migrationId, logger) {
+  const projectName = `migration-${migrationId}`;
+
+  try {
+    logger.info(`Cleaning Docker project ${projectName} (down -v)...`);
+    const compose = await getDockerComposeCommand();
+
+    await execProcess(
+      compose.cmd,
+      [...compose.baseArgs, '-p', projectName, 'down', '-v'],
+      { cwd: DOCKER_COMPOSE_PATH, env: { ...process.env, MIGRATION_ID: migrationId } }
+    );
+
+    logger.info('Docker cleanup completed');
+  } catch (err) {
+    logger.warn('Docker cleanup skipped (nothing to remove)');
   }
 }
 
@@ -394,42 +533,45 @@ async function stopDockerContainers(migrationId, logger) {
  */
 async function startMigration(migration, onLog = null) {
   const logger = new Logger(migration.logPath, onLog);
-  
+
   try {
     logger.info(`Starting migration ${migration.id}`);
     logger.info(`File: ${migration.fileName}`);
 
-    // Step 1: Prepare dump file
+    // 0) Load containers/.env into Node env
+    loadContainerEnv(logger);
+    // Juste après loadContainerEnv(logger)
+    await cleanupDockerProject(migration.id, logger);
+    // 1) Prepare dump file
     const dumpPath = await prepareDumpFile(migration.uploadedFile, migration.id, logger);
 
-    // Step 2: Create pgloader config
-    const configPath = await createPgloaderConfig(migration.id, dumpPath, logger);
+    // 2) Create pgloader config (extract DB name from dump)
+    await createPgloaderConfig(migration.id, dumpPath, logger);
 
-    // Step 3: Start Docker containers (MySQL loads dump automatically from /docker-entrypoint-initdb.d)
+    // 3) Start docker containers (MIGRATION_ID is passed)
     await startDockerContainers(migration.id, logger);
 
-    // Step 4: Wait for databases to be ready
-    await waitForDatabases(migration.id, logger);
+    // 4) Wait for db readiness + verify MySQL has tables
+    await waitForDatabases(migration.id, dumpPath, logger);
 
-    // Step 5: Run pgloader migration
+    // 5) Run pgloader
     await runPgloaderMigration(migration.id, logger);
 
-    // Step 6: Export PostgreSQL dump
+    // 6) Verify Postgres has tables BEFORE dumping
+    await verifyPostgresHasTables(migration.id, logger);
+
+    // 7) Export dump
     const outputFile = await exportPostgresDump(migration.id, logger);
 
-    // Step 7: Cleanup
+    // 8) Cleanup
     await stopDockerContainers(migration.id, logger);
 
     logger.info('Migration completed successfully');
-    
-    return {
-      success: true,
-      outputFile: outputFile
-    };
 
+    return { success: true, outputFile };
   } catch (error) {
     logger.error(`Migration failed: ${error.message}`);
-    
+
     try {
       await stopDockerContainers(migration.id, logger);
     } catch (cleanupError) {
@@ -440,6 +582,4 @@ async function startMigration(migration, onLog = null) {
   }
 }
 
-module.exports = {
-  startMigration
-};
+module.exports = { startMigration };

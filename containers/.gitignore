@@ -26,7 +26,7 @@ log/
 *.temp
 cache/
 tmp/
-
+migration/
 # Large pgAdmin files
 pgAdmin/storage/*/logs/
 pgAdmin/storage/*/sessions/
