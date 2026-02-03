@@ -138,7 +138,7 @@ async function createPgloaderConfig(migrationId, dumpPath, logger) {
   logger.info('Creating pgloader configuration...');
 
   const requiredEnvVars = [
-    'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_ROOT_PASSWORD',
+    'MYSQL_HOST', 'MYSQL_USER', 'MYSQL_ROOT_PASSWORD','MYSQL_ROOT',
     'POSTGRES_HOST', 'POSTGRES_USER', 'POSTGRES_PASSWORD', 'POSTGRES_DB',
     'MYSQL_PORT_INTERNAL', 'POSTGRES_PORT_INTERNAL'
   ];
@@ -150,7 +150,7 @@ async function createPgloaderConfig(migrationId, dumpPath, logger) {
 
   const mysqlHost = process.env.MYSQL_HOST;
   const mysqlPort = envInt('MYSQL_PORT_INTERNAL', 3306);
-  const mysqlUser = 'root';
+  const mysqlUser = process.env.MYSQL_ROOT;
   const mysqlPassword = encodeCredentials(process.env.MYSQL_ROOT_PASSWORD);
 
   const mysqlDb = extractDatabaseName(dumpPath);
@@ -287,7 +287,7 @@ async function waitForDatabases(migrationId, dumpPath, logger, maxAttempts = 120
         await sleep(10000);
 
         // Verify MySQL contains the expected DB and at least one table
-        const mysqlUser =  'root';
+        const mysqlUser =  process.env.MYSQL_ROOT;
         const mysqlPassword = process.env.MYSQL_ROOT_PASSWORD;
           
 
@@ -483,49 +483,68 @@ async function exportPostgresDump(migrationId, logger) {
   }
 }
 
-/**
- * Stop and remove Docker containers
- */
-async function stopDockerContainers(migrationId, logger) {
-  logger.info('Stopping Docker containers...');
-
-  const projectName = `migration-${migrationId}`;
-  const env = { ...process.env, MIGRATION_ID: migrationId };
+async function getDockerComposeCommand() {
+  try {
+    await execProcess('docker', ['compose', 'version']);
+    return { cmd: 'docker', baseArgs: ['compose'] };
+  } catch (_) {}
 
   try {
-    await execProcess('docker-compose', [
-      '-p', projectName,
-      'down'
-    ], {
-      cwd: DOCKER_COMPOSE_PATH,
-      env
-    });
+    await execProcess('docker-compose', ['version']);
+    return { cmd: 'docker-compose', baseArgs: [] };
+  } catch (_) {}
 
-    logger.info('Containers stopped successfully');
-  } catch (err) {
-    logger.warn('Cleanup warning', { stderr: err.stderr, stdout: err.stdout });
-  }
+  throw new Error('Neither "docker compose" nor "docker-compose" is available.');
 }
+
 
 
 async function cleanupDockerProject(migrationId, logger) {
   const projectName = `migration-${migrationId}`;
 
-  try {
-    logger.info(`Cleaning Docker project ${projectName} (down -v)...`);
-    const compose = await getDockerComposeCommand();
+  logger.info('--- Docker cleanup start ---');
+  logger.info(`Project name: ${projectName}`);
+  logger.info(`Compose working dir: ${DOCKER_COMPOSE_PATH}`);
 
-    await execProcess(
+  try {
+    const compose = await getDockerComposeCommand();
+    logger.info(`Using compose command: ${compose.cmd} ${compose.baseArgs.join(' ') || '(v1)'}`);
+
+    const args = [...compose.baseArgs, '-p', projectName, 'down', '-v'];
+    logger.info(`Running: ${compose.cmd} ${args.join(' ')}`);
+
+    const result = await execProcess(
       compose.cmd,
-      [...compose.baseArgs, '-p', projectName, 'down', '-v'],
+      args,
       { cwd: DOCKER_COMPOSE_PATH, env: { ...process.env, MIGRATION_ID: migrationId } }
     );
 
-    logger.info('Docker cleanup completed');
+    logger.info(`docker compose down exit code: ${result.code}`);
+
+    const out = (result.stdout || '').trim();
+    const err = (result.stderr || '').trim();
+
+    // Sur succès, on loggue stdout/stderr en INFO (pas WARN)
+    logger.info(`docker compose down stdout:\n${out || '(empty)'}`);
+
+    logger.info('Docker cleanup completed successfully');
   } catch (err) {
-    logger.warn('Docker cleanup skipped (nothing to remove)');
+    // Ici c'est un vrai problème de cleanup (ou projet inexistant)
+    logger.warn('Docker cleanup failed or skipped');
+    logger.warn(`Reason: ${err.message || '(no message)'}`);
+
+    const out = (err.stdout || '').trim();
+    const sterr = (err.stderr || '').trim();
+
+    if (out) logger.warn(`stdout:\n${out}`);
+    if (sterr) logger.warn(`stderr:\n${sterr}`);
+
+    logger.warn('Proceeding without cleanup (this is usually OK for first run)');
+  } finally {
+    logger.info('--- Docker cleanup end ---');
   }
 }
+
 
 /**
  * Main migration orchestrator
@@ -539,8 +558,7 @@ async function startMigration(migration, onLog = null) {
 
     // 0) Load containers/.env into Node env
     loadContainerEnv(logger);
-    // Juste après loadContainerEnv(logger)
-    await cleanupDockerProject(migration.id, logger);
+
     // 1) Prepare dump file
     const dumpPath = await prepareDumpFile(migration.uploadedFile, migration.id, logger);
 
@@ -562,17 +580,18 @@ async function startMigration(migration, onLog = null) {
     // 7) Export dump
     const outputFile = await exportPostgresDump(migration.id, logger);
 
-    // 8) Cleanup
-    await stopDockerContainers(migration.id, logger);
 
     logger.info('Migration completed successfully');
+
+    // Juste après loadContainerEnv(logger)
+    await cleanupDockerProject(migration.id, logger);
 
     return { success: true, outputFile };
   } catch (error) {
     logger.error(`Migration failed: ${error.message}`);
 
     try {
-      await stopDockerContainers(migration.id, logger);
+       await cleanupDockerProject(migration.id, logger);
     } catch (cleanupError) {
       logger.error(`Cleanup error: ${cleanupError.message}`);
     }
