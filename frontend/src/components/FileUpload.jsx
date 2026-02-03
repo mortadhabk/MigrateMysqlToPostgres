@@ -11,17 +11,17 @@ const FileUpload = ({ onFileSelect }) => {
   }
 
   return (
-    <div className="bg-white border-2 border-dashed border-slate-300 hover:border-blue-500 hover:bg-blue-50 rounded-2xl p-12 text-center transition-all duration-300 cursor-pointer shadow-sm"
+    <div className="group bg-white border-2 border-dashed border-slate-200 hover:border-blue-400 hover:bg-blue-50/40 rounded-2xl p-10 text-center transition-all duration-300 cursor-pointer shadow-sm"
       onDragOver={(e) => {
         e.preventDefault()
-        e.currentTarget.classList.add('border-blue-500', 'bg-blue-50')
+        e.currentTarget.classList.add('border-blue-400', 'bg-blue-50/40')
       }}
       onDragLeave={(e) => {
-        e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50')
+        e.currentTarget.classList.remove('border-blue-400', 'bg-blue-50/40')
       }}
       onDrop={(e) => {
         e.preventDefault()
-        e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50')
+        e.currentTarget.classList.remove('border-blue-400', 'bg-blue-50/40')
         const file = e.dataTransfer.files?.[0]
         if (file && (file.type === 'application/x-sql' || file.name.endsWith('.sql'))) {
           handleFileChange({ target: { files: e.dataTransfer.files } })
@@ -37,10 +37,12 @@ const FileUpload = ({ onFileSelect }) => {
         style={{ display: 'none' }}
       />
       <label htmlFor="file-upload" className="cursor-pointer block">
-        <div className="text-5xl mb-4">📋</div>
-        <p className="text-slate-900 font-bold text-lg mb-2">Drop your MySQL dump here</p>
-        <p className="text-slate-500 text-sm">or click to browse your files</p>
-        <p className="text-slate-400 text-xs mt-3">Supports .sql files • Max 1 GB</p>
+        <p className="text-slate-900 font-semibold text-xl mb-2">Upload MySQL dump</p>
+        <p className="text-slate-500 text-sm mb-6">Drag and drop your .sql file here, or browse to select it.</p>
+        <span className="inline-flex items-center justify-center px-4 py-2 text-sm font-semibold text-slate-900 bg-slate-100 rounded-lg group-hover:bg-white group-hover:shadow-sm transition">
+          Choose file
+        </span>
+        <p className="text-slate-400 text-xs mt-4">Supports .sql files • Up to 1 GB</p>
       </label>
     </div>
   )
