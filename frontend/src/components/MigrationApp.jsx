@@ -98,20 +98,9 @@ const MigrationApp = () => {
         if (data.type === 'log') {
           // Add log from server
           const timestamp = new Date(data.timestamp).toLocaleTimeString()
-          let formattedMessage = data.message
-          
-          // Format based on level
-          if (data.level === 'INFO') {
-            formattedMessage = `▶ ${data.message}`
-          } else if (data.level === 'WARN') {
-            formattedMessage = `⚠ ${data.message}`
-          } else if (data.level === 'ERROR') {
-            formattedMessage = `✗ ${data.message}`
-          }
-          
           setLogs(prev => [
             ...prev,
-            { timestamp, level: data.level, message: formattedMessage }
+            { timestamp, level: data.level, message: data.message }
           ])
         } else if (data.type === 'status') {
           const migrationStatus = data.data.status
@@ -192,18 +181,18 @@ const MigrationApp = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-white via-slate-50 to-blue-50 py-12 px-4">
-      <div className="max-w-5xl mx-auto">
+    <div className="min-h-screen bg-slate-50 py-12 px-4">
+      <div className="max-w-5xl mx-auto space-y-12">
         {/* Header */}
-        <div className="text-center mb-16">
-          <div className="inline-block mb-4">
-            <div className="text-5xl">⚡</div>
-          </div>
-          <h1 className="text-5xl font-bold text-slate-900 mb-3">
-            MySQL to PostgreSQL
+        <div className="text-center space-y-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
+            Migration toolkit
+          </p>
+          <h1 className="text-4xl md:text-5xl font-semibold text-slate-900">
+            MySQL to PostgreSQL Migration
           </h1>
-          <p className="text-slate-400">
-            Migrate your database with a single click
+          <p className="text-slate-500 max-w-2xl mx-auto">
+            Upload a MySQL dump, run the migration, and download a PostgreSQL-ready file with clear, real-time feedback.
           </p>
         </div>
 
@@ -211,32 +200,49 @@ const MigrationApp = () => {
         <div className="space-y-6">
           {/* Step 1: File Upload */}
           {status === 'idle' && (
-            <FileUpload onFileSelect={handleFileUpload} />
+            <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6 mb-6">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900">Step 1</p>
+                  <h2 className="text-2xl font-semibold text-slate-900 mt-2">Upload SQL dump</h2>
+                  <p className="text-slate-500 text-sm mt-2">
+                    Provide a MySQL .sql file to start the migration workflow.
+                  </p>
+                </div>
+                <div className="md:text-right">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Accepted format</p>
+                  <p className="text-sm text-slate-600 mt-1">.sql • UTF-8 preferred</p>
+                </div>
+              </div>
+              <FileUpload onFileSelect={handleFileUpload} />
+            </div>
           )}
 
           {/* Step 2: Ready to migrate */}
           {status === 'ready' && (
-            <div className="bg-white border border-slate-200 rounded-2xl p-8 space-y-6 shadow-sm">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-slate-500 text-sm mb-2">File selected</p>
-                  <p className="text-slate-900 font-bold text-lg">{fileName}</p>
-                  <p className="text-slate-400 text-sm mt-1">{formatBytes(fileSize)}</p>
+            <div className="bg-white border border-slate-200 rounded-3xl p-8 shadow-sm">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
+                <div className="space-y-2">
+                  <p className="text-slate-500 text-sm">File ready</p>
+                  <p className="text-slate-900 font-semibold text-lg">{fileName}</p>
+                  <p className="text-slate-400 text-sm">{formatBytes(fileSize)}</p>
                 </div>
-                <div className="text-3xl">✓</div>
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm text-slate-600">
+                  Next step: start the migration to stream logs in real time.
+                </div>
               </div>
-              <div className="flex gap-3 pt-4">
+              <div className="flex flex-col sm:flex-row gap-3 pt-6">
                 <button
                   onClick={handleStartMigration}
                   className="btn-primary flex-1"
                 >
-                  Launch Migration
+                  Start migration
                 </button>
                 <button
                   onClick={handleReset}
                   className="btn-secondary"
                 >
-                  Change File
+                  Replace file
                 </button>
               </div>
             </div>
@@ -245,14 +251,20 @@ const MigrationApp = () => {
           {/* Step 3: Migration in progress */}
           {(status === 'running') && (
             <div className="space-y-4">
-              <div className="bg-white border border-slate-200 rounded-2xl p-6 shadow-sm">
-                <div className="flex items-center justify-between mb-4">
-                  <p className="text-slate-700 text-sm font-semibold">Migration in Progress</p>
-                  <span className="text-blue-600 font-mono text-sm font-bold">{progress}%</span>
+              <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+                  <div>
+                    <p className="text-slate-500 text-sm">Step 2</p>
+                    <p className="text-slate-900 text-lg font-semibold">Migration in progress</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs uppercase tracking-wide text-slate-400">Progress</p>
+                    <p className="text-blue-600 font-mono text-sm font-bold">{progress}%</p>
+                  </div>
                 </div>
-                <div className="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
+                <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
                   <div
-                    className="bg-gradient-to-r from-blue-600 to-blue-500 h-3 rounded-full transition-all duration-500"
+                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-500"
                     style={{ width: `${progress}%` }}
                   />
                 </div>
@@ -278,17 +290,19 @@ const MigrationApp = () => {
           {status === 'failed' && (
             <div className="space-y-4">
               {logs.length > 0 && <LogConsole logs={logs} />}
-              <div className="bg-red-50 border border-red-200 rounded-2xl p-6">
-                <div className="flex items-start gap-4">
-                  <div className="text-3xl">✕</div>
+              <div className="bg-rose-50/60 border border-rose-200 rounded-3xl p-6 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-start gap-4">
+                  <div className="h-10 w-10 rounded-full bg-white border border-rose-200 flex items-center justify-center">
+                    <div className="h-2.5 w-2.5 rounded-full bg-rose-500" />
+                  </div>
                   <div className="flex-1">
-                    <h3 className="text-red-900 font-bold mb-2">Migration Failed</h3>
-                    <p className="text-red-700 text-sm mb-4">{error}</p>
+                    <h3 className="text-rose-900 font-semibold mb-2">Migration failed</h3>
+                    <p className="text-rose-800/90 text-sm mb-4">{error}</p>
                     <button
                       onClick={handleReset}
                       className="btn-primary"
                     >
-                      Try Again
+                      Try again
                     </button>
                   </div>
                 </div>
@@ -298,8 +312,8 @@ const MigrationApp = () => {
         </div>
 
         {/* Footer */}
-        <div className="text-center mt-16 text-slate-400 text-xs">
-          <p>Built with React, Vite, Tailwind CSS • Modern Database Migration Tool</p>
+        <div className="text-center text-slate-400 text-xs">
+          <p>React · Vite · Tailwind CSS • Internal migration console</p>
         </div>
       </div>
     </div>

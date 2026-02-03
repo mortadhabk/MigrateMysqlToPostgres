@@ -1,15 +1,22 @@
 const MigrationResult = ({ outputFile, onDownload, onNewMigration }) => {
   return (
-    <div className="bg-green-50 border border-green-200 rounded-2xl p-8">
-      <div className="flex items-start gap-4">
-        <div className="text-4xl">✓</div>
-        <div className="flex-1">
-          <h3 className="text-green-900 font-bold mb-4 text-xl">
-            Migration Completed Successfully!
-          </h3>
+    <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-8 shadow-sm">
+      <div className="flex items-start gap-6">
+        <div className="h-12 w-12 rounded-full bg-white border border-emerald-200 flex items-center justify-center">
+          <div className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+        </div>
+        <div className="flex-1 space-y-4">
+          <div>
+            <h3 className="text-emerald-900 font-semibold text-xl">
+              Migration completed
+            </h3>
+            <p className="text-emerald-800/80 text-sm">
+              Your PostgreSQL dump is ready for download.
+            </p>
+          </div>
           {outputFile && (
-            <div className="bg-slate-100 rounded-xl p-4 mb-6">
-              <p className="text-slate-600 text-xs mb-2 font-semibold">Generated PostgreSQL dump:</p>
+            <div className="bg-white rounded-xl p-4 border border-emerald-100">
+              <p className="text-slate-500 text-xs mb-2 font-semibold uppercase tracking-wide">Output file</p>
               <p className="text-slate-900 font-mono text-sm break-all">{outputFile}</p>
             </div>
           )}
@@ -18,13 +25,13 @@ const MigrationResult = ({ outputFile, onDownload, onNewMigration }) => {
               onClick={onDownload}
               className="btn-primary"
             >
-              ⬇️ Download Dump
+              Download dump
             </button>
             <button
               onClick={onNewMigration}
               className="btn-secondary"
             >
-              Migrate Another
+              Start new migration
             </button>
           </div>
         </div>
