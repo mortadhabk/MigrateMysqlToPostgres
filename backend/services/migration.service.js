@@ -166,6 +166,13 @@ async function prepareDumpFile(uploadedFile, migrationId, logger) {
   fs.copyFileSync(uploadedFile, dumpPath);
   logger.info(`Dump file prepared at ${dumpPath}`);
 
+  try {
+    fs.rmSync(uploadedFile, { force: true });
+    logger.info('Uploaded SQL dump removed after staging.');
+  } catch (err) {
+    logger.warn('Failed to remove uploaded SQL dump after staging.', { message: err.message });
+  }
+
   return dumpPath;
 }
 

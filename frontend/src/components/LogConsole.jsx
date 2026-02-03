@@ -12,12 +12,12 @@ const LogConsole = ({ logs }) => {
   return (
     <div className="bg-slate-950/95 border border-slate-800/70 rounded-2xl p-4 max-h-96 overflow-y-auto font-mono text-xs shadow-sm">
       <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800/70">
-        <p className="text-indigo-200 text-xs font-semibold uppercase tracking-wide">Live logs</p>
-        <p className="text-slate-500 text-[11px]">Streamed from migration service</p>
+        <p className="text-indigo-200 text-xs font-semibold uppercase tracking-wide">Logs en direct</p>
+        <p className="text-slate-500 text-[11px]">Flux temporaire (session uniquement)</p>
       </div>
       <div className="space-y-1.5">
         {logs.length === 0 ? (
-          <div className="text-slate-400">Waiting for logs...</div>
+          <div className="text-slate-400">En attente des logs...</div>
         ) : (
           logs.map((log, idx) => (
             <div key={idx} className="flex gap-3">

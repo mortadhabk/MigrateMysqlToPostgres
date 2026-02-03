@@ -24,6 +24,8 @@ const PORT = process.env.PORT || 3001;
 const UPLOAD_DIR = process.env.UPLOAD_DIR || './uploads';
 const LOGS_DIR = process.env.LOGS_DIR || './logs';
 const MAX_FILE_SIZE = parseInt(process.env.MAX_FILE_SIZE) || 1073741824; // 1GB
+const CLEANUP_TTL_MS = parseInt(process.env.CLEANUP_TTL_MS, 10) || 30 * 60 * 1000; // 30 min
+const FAILED_CLEANUP_TTL_MS = parseInt(process.env.FAILED_CLEANUP_TTL_MS, 10) || 5 * 60 * 1000; // 5 min
 const CONTAINERS_DIR = path.resolve(__dirname, '../containers');
 
 // Middleware
@@ -78,6 +80,35 @@ const safeRemove = (targetPath, label) => {
   } catch (err) {
     console.warn(`[cleanup] Failed to remove ${label}: ${targetPath}`, err.message);
   }
+};
+
+const cleanupMigrationFiles = (migration, options = {}) => {
+  const { keepOutputFile = true } = options;
+  if (!migration) return;
+
+  if (migration.cleanupTimer) {
+    clearTimeout(migration.cleanupTimer);
+    migration.cleanupTimer = null;
+  }
+
+  safeRemove(migration.uploadedFile, 'uploaded SQL file');
+  safeRemove(migration.logPath, 'migration log');
+
+  if (!keepOutputFile) {
+    safeRemove(migration.outputFile, 'postgres dump');
+    migration.outputFile = null;
+  }
+
+  migrations.delete(migration.id);
+};
+
+const scheduleMigrationCleanup = (migration, options = {}) => {
+  if (!migration || migration.cleanupTimer) return;
+  const { keepOutputFile = true, delayMs = CLEANUP_TTL_MS } = options;
+
+  migration.cleanupTimer = setTimeout(() => {
+    cleanupMigrationFiles(migration, { keepOutputFile });
+  }, delayMs);
 };
 
 const broadcastStatus = (migration, statusData) => {
@@ -139,6 +170,7 @@ app.post('/api/migrate/:migrationId', async (req, res) => {
   } catch (err) {
     migration.status = 'failed';
     migration.error = err?.message || 'Invalid SQL dump';
+    cleanupMigrationFiles(migration, { keepOutputFile: false });
     return res.status(400).json({ error: migration.error });
   }
 
@@ -171,6 +203,7 @@ app.post('/api/migrate/:migrationId', async (req, res) => {
     };
 
     broadcastStatus(migration, statusData);
+    scheduleMigrationCleanup(migration, { keepOutputFile: false, delayMs: CLEANUP_TTL_MS });
   })
   .catch(error => {
     migration.status = 'failed';
@@ -183,6 +216,7 @@ app.post('/api/migrate/:migrationId', async (req, res) => {
     };
 
     broadcastStatus(migration, statusData);
+    scheduleMigrationCleanup(migration, { keepOutputFile: false, delayMs: FAILED_CLEANUP_TTL_MS });
   });
 
   return res.status(200).json({
@@ -289,6 +323,11 @@ app.get('/api/download/:migrationId', (req, res) => {
     return res.status(404).json({ error: 'Output file not found' });
   }
 
+  if (migration.cleanupTimer) {
+    clearTimeout(migration.cleanupTimer);
+    migration.cleanupTimer = null;
+  }
+
   const fileName = `postgres_dump_${migrationId}.sql`;
   let cleaned = false;
   const cleanupArtifacts = () => {
@@ -303,6 +342,8 @@ app.get('/api/download/:migrationId', (req, res) => {
     safeRemove(loadFile, 'pgloader config');
     safeRemove(outputFile, 'postgres dump');
     migration.outputFile = null;
+
+    cleanupMigrationFiles(migration, { keepOutputFile: false });
   };
 
   const handleCleanup = () => {
