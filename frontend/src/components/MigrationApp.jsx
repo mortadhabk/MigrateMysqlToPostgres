@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import FileUpload from './FileUpload'
 import LogConsole from './LogConsole'
 import MigrationResult from './MigrationResult'
-import { API_BASE_URL } from '../utils/config'
+import { API_BASE_URL, readErrorMessage } from '../utils/config'
 
 const MigrationApp = () => {
   const [migrationId, setMigrationId] = useState(null)
@@ -72,9 +72,10 @@ const MigrationApp = () => {
         method: 'POST'
       })
 
-      if (!response.ok) {
-        throw new Error('Failed to start migration')
-      }
+    if (!response.ok) {
+      const msg = await readErrorMessage(response);
+      throw new Error(msg);
+    }
 
       // Stream logs via SSE
       streamLogs()

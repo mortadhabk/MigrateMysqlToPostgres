@@ -104,93 +104,70 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
  * POST /api/migrate/:migrationId
  * Start migration process
  */
-app.post('/api/migrate/:migrationId', (req, res) => {
+app.post('/api/migrate/:migrationId', async (req, res) => {
   const { migrationId } = req.params;
   const migration = migrations.get(migrationId);
 
-  if (!migration) {
-    return res.status(404).json({ error: 'Migration not found' });
-  }
+  if (!migration) return res.status(404).json({ error: 'Migration not found' });
+  if (migration.status === 'running') return res.status(409).json({ error: 'Migration already running' });
 
-  if (migration.status === 'running') {
-    return res.status(409).json({ error: 'Migration already running' });
+  // Pré-validation immédiate => si invalide, le front verra l’erreur
+  try {
+    const { dbName, warnings } = await migrationService.preValidateSqlDump(migration.uploadedFile);
+    migration.dbName = dbName;
+    migration.warnings = warnings;
+  } catch (err) {
+    migration.status = 'failed';
+    migration.error = err?.message || 'Invalid SQL dump';
+    return res.status(400).json({ error: migration.error });
   }
 
   migration.status = 'running';
   migration.progress = 0;
-  
-  // Store clients for this migration
-  if (!migration.clients) {
-    migration.clients = [];
-  }
+  if (!migration.clients) migration.clients = [];
 
-  // Start migration in background with callback for real-time logs
   migrationService.startMigration(migration, (logEntry) => {
-    // Broadcast log to all connected clients
-    if (migration.clients && migration.clients.length > 0) {
-      migration.clients.forEach(client => {
-        try {
-          client.res.write(`data: ${JSON.stringify(logEntry)}\n\n`);
-        } catch (err) {
-          // Client may have disconnected
-        }
-      });
-    }
-  })
-    .then(result => {
-      migration.status = 'completed';
-      migration.progress = 100;
-      migration.outputFile = result.outputFile;
-      
-      // Send final status to all clients
-      if (migration.clients && migration.clients.length > 0) {
-        const statusData = {
-          status: migration.status,
-          progress: migration.progress,
-          outputFile: migration.outputFile ? path.basename(migration.outputFile) : null
-        };
-        migration.clients.forEach(client => {
-          try {
-            client.res.write(`data: ${JSON.stringify({ 
-              type: 'status', 
-              data: statusData
-            })}\n\n`);
-          } catch (err) {
-            // Client may have disconnected
-          }
-        });
-      }
-    })
-    .catch(error => {
-      migration.status = 'failed';
-      migration.error = error.message;
-      
-      // Send error status to all clients
-      if (migration.clients && migration.clients.length > 0) {
-        const statusData = {
-          status: migration.status,
-          progress: migration.progress,
-          error: migration.error
-        };
-        migration.clients.forEach(client => {
-          try {
-            client.res.write(`data: ${JSON.stringify({ 
-              type: 'status', 
-              data: statusData
-            })}\n\n`);
-          } catch (err) {
-            // Client may have disconnected
-          }
-        });
-      }
+    migration.clients?.forEach(client => {
+      try { client.res.write(`data: ${JSON.stringify(logEntry)}\n\n`); } catch {}
     });
+  })
+  .then(result => {
+    migration.status = 'completed';
+    migration.progress = 100;
+    migration.outputFile = result.outputFile;
 
-  res.json({
+    const statusData = {
+      status: migration.status,
+      progress: migration.progress,
+      outputFile: migration.outputFile ? path.basename(migration.outputFile) : null
+    };
+
+    migration.clients?.forEach(client => {
+      try { client.res.write(`data: ${JSON.stringify({ type: 'status', data: statusData })}\n\n`); } catch {}
+    });
+  })
+  .catch(error => {
+    migration.status = 'failed';
+    migration.error = error.message;
+
+    const statusData = {
+      status: migration.status,
+      progress: migration.progress,
+      error: migration.error
+    };
+
+    migration.clients?.forEach(client => {
+      try { client.res.write(`data: ${JSON.stringify({ type: 'status', data: statusData })}\n\n`); } catch {}
+    });
+  });
+
+  return res.status(200).json({
     success: true,
     migrationId,
     message: 'Migration started'
   });
 });
+
 
 /**
  * GET /api/migrate/:migrationId/logs

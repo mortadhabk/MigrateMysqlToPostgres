@@ -2,8 +2,29 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const dotenv = require('dotenv');
-
 const DOCKER_COMPOSE_PATH = process.env.DOCKER_COMPOSE_PATH || path.resolve(__dirname, '../../containers');
+
+
+// Cache pour éviter de refaire l'import à chaque appel
+let _validateAndPrepareSqlDump;
+
+async function getValidateAndPrepareSqlDump() {
+  if (_validateAndPrepareSqlDump) return _validateAndPrepareSqlDump;
+
+  const mod = await import('./validateAndPrepareSqlDump.mjs');
+  _validateAndPrepareSqlDump = mod.validateAndPrepareSqlDump;
+  return _validateAndPrepareSqlDump;
+}
+async function preValidateSqlDump(dumpPath) {
+  const validateAndPrepareSqlDump = await getValidateAndPrepareSqlDump();
+
+  return validateAndPrepareSqlDump(dumpPath, {
+    defaultDbName: process.env.MYSQL_DATABASE || process.env.DATABASE_NAME || 'source_db',
+    injectUseHeaderIfMissing: true,
+  });
+}
+
+module.exports = { startMigration, preValidateSqlDump };
 
 /**
  * Logging utility with real-time callback
@@ -549,8 +570,12 @@ async function cleanupDockerProject(migrationId, logger) {
 /**
  * Main migration orchestrator
  */
+
 async function startMigration(migration, onLog = null) {
   const logger = new Logger(migration.logPath, onLog);
+
+  // Indique si on a démarré Docker (pour éviter cleanup inutile)
+  let dockerStarted = false;
 
   try {
     logger.info(`Starting migration ${migration.id}`);
@@ -562,11 +587,12 @@ async function startMigration(migration, onLog = null) {
     // 1) Prepare dump file
     const dumpPath = await prepareDumpFile(migration.uploadedFile, migration.id, logger);
 
-    // 2) Create pgloader config (extract DB name from dump)
+    // 2) Create pgloader config
     await createPgloaderConfig(migration.id, dumpPath, logger);
 
     // 3) Start docker containers (MIGRATION_ID is passed)
     await startDockerContainers(migration.id, logger);
+    dockerStarted = true;
 
     // 4) Wait for db readiness + verify MySQL has tables
     await waitForDatabases(migration.id, dumpPath, logger);
@@ -580,24 +606,22 @@ async function startMigration(migration, onLog = null) {
     // 7) Export dump
     const outputFile = await exportPostgresDump(migration.id, logger);
 
-
     logger.info('Migration completed successfully');
-
-    // Juste après loadContainerEnv(logger)
-    await cleanupDockerProject(migration.id, logger);
 
     return { success: true, outputFile };
   } catch (error) {
-    logger.error(`Migration failed: ${error.message}`);
-
-    try {
-       await cleanupDockerProject(migration.id, logger);
-    } catch (cleanupError) {
-      logger.error(`Cleanup error: ${cleanupError.message}`);
-    }
-
+    logger.error(`Migration failed: ${error?.message || error}`);
     throw error;
+  } finally {
+    // Cleanup toujours, mais seulement si docker a été démarré
+    if (dockerStarted) {
+      try {
+        await cleanupDockerProject(migration.id, logger);
+      } catch (cleanupError) {
+        logger.error(`Cleanup error: ${cleanupError?.message || cleanupError}`);
+      }
+    }
   }
 }
 
-module.exports = { startMigration };
+module.exports = { startMigration, preValidateSqlDump  };
