@@ -1,4 +1,4 @@
-const LogConsole = ({ logs }) => {
+const LogConsole = ({ logs, containerRef, onScroll }) => {
   const getLogColor = (level) => {
     const colors = {
       'INFO': 'text-indigo-300',
@@ -10,7 +10,11 @@ const LogConsole = ({ logs }) => {
   }
 
   return (
-    <div className="bg-slate-950/95 border border-slate-800/70 rounded-2xl p-4 max-h-96 overflow-y-auto font-mono text-xs shadow-sm">
+    <div
+      ref={containerRef}
+      onScroll={onScroll}
+      className="bg-slate-950/95 border border-slate-800/70 rounded-2xl p-4 max-h-96 overflow-y-auto font-mono text-xs shadow-sm"
+    >
       <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800/70">
         <p className="text-indigo-200 text-xs font-semibold uppercase tracking-wide">Logs en direct</p>
         <p className="text-slate-500 text-[11px]">Flux temporaire (session uniquement)</p>
