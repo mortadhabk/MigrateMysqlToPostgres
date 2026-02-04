@@ -2,6 +2,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const dotenv = require('dotenv');
+const { pipeline } = require('stream/promises');
 const DOCKER_COMPOSE_PATH = process.env.DOCKER_COMPOSE_PATH || path.resolve(__dirname, '../../containers');
 
 
@@ -508,22 +509,36 @@ async function exportPostgresDump(migrationId, logger) {
 
   logger.info(`pg_dump will use: user=${pgUser}, db=${pgDb}`);
 
+  const child = spawn('docker', [
+    'exec', pgContainerName,
+    'pg_dump',
+    '-U', pgUser,
+    '-d', pgDb,
+    '--no-owner',
+    '--no-privileges'
+  ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  let stderr = '';
+  child.stderr.on('data', (data) => {
+    stderr += data.toString();
+  });
+
   try {
-    const result = await execProcess('docker', [
-      'exec', pgContainerName,
-      'pg_dump',
-      '-U', pgUser,
-      '-d', pgDb,
-      '--no-owner',
-      '--no-privileges'
+    await Promise.all([
+      pipeline(child.stdout, fs.createWriteStream(outputPath)),
+      new Promise((resolve, reject) => {
+        child.on('error', reject);
+        child.on('close', (code) => {
+          if (code === 0) return resolve();
+          reject(new Error(stderr || `pg_dump failed with exit code ${code}`));
+        });
+      })
     ]);
 
-    fs.writeFileSync(outputPath, result.stdout, 'utf8');
     logger.info(`PostgreSQL dump exported to ${outputPath}`);
-
     return outputPath;
   } catch (err) {
-    logger.error('pg_dump failed', { stderr: err.stderr, stdout: err.stdout });
+    logger.error('pg_dump failed', { stderr: stderr || err.message });
     throw new Error('PostgreSQL dump export failed');
   }
 }

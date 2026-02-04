@@ -13,7 +13,8 @@ const MigrationApp = () => {
   const [error, setError] = useState('')
   const [progress, setProgress] = useState(0)
   const [outputFile, setOutputFile] = useState(null)
-  const logsEndRef = useRef(null)
+  const logContainerRef = useRef(null)
+  const shouldAutoScrollRef = useRef(true)
 
   const migrationSteps = [
     { id: 'connect', label: 'Connexion en cours…', threshold: 0 },
@@ -35,9 +36,18 @@ const MigrationApp = () => {
     ? migrationSteps[activeStepIndex].label
     : 'Préparation…'
 
-  // Auto-scroll to latest log
+  const handleLogScroll = () => {
+    const container = logContainerRef.current
+    if (!container) return
+    const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    shouldAutoScrollRef.current = distanceToBottom < 48
+  }
+
+  // Auto-scroll to latest log only when user stays at the bottom
   useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const container = logContainerRef.current
+    if (!container || !shouldAutoScrollRef.current) return
+    container.scrollTop = container.scrollHeight
   }, [logs])
 
   /**
@@ -86,6 +96,7 @@ const MigrationApp = () => {
     setError('')
     setLogs([])
     setProgress(0)
+    shouldAutoScrollRef.current = true
 
     try {
       const response = await fetch(`${API_BASE_URL}/migrate/${migrationId}`, {
@@ -359,15 +370,22 @@ const MigrationApp = () => {
                   })}
                 </div>
               </div>
-              <LogConsole logs={logs} />
-              <div ref={logsEndRef} />
+              <LogConsole
+                logs={logs}
+                containerRef={logContainerRef}
+                onScroll={handleLogScroll}
+              />
             </div>
           )}
 
           {/* Step 4: Migration completed */}
           {status === 'completed' && (
             <div className="space-y-4">
-              <LogConsole logs={logs} />
+              <LogConsole
+                logs={logs}
+                containerRef={logContainerRef}
+                onScroll={handleLogScroll}
+              />
               <MigrationResult
                 outputFile={outputFile}
                 onDownload={handleDownload}
@@ -379,7 +397,13 @@ const MigrationApp = () => {
           {/* Step 5: Migration failed */}
           {status === 'failed' && (
             <div className="space-y-4">
-              {logs.length > 0 && <LogConsole logs={logs} />}
+              {logs.length > 0 && (
+                <LogConsole
+                  logs={logs}
+                  containerRef={logContainerRef}
+                  onScroll={handleLogScroll}
+                />
+              )}
               <div className="bg-rose-50/80 border border-rose-200/80 rounded-3xl p-6 shadow-sm fade-up">
                 <div className="flex flex-col sm:flex-row sm:items-start gap-4">
                   <div className="h-10 w-10 rounded-full bg-white border border-rose-200 flex items-center justify-center shadow-sm">
